@@ -1,8 +1,3 @@
-#![allow(missing_copy_implementations)]
-#![feature(core)]
-#![feature(std_misc)]
-#![feature(libc)]
-#![feature(path)]
 extern crate libc;
 
 #[macro_use]
@@ -13,11 +8,13 @@ use std::str::Utf8Error;
 use std::option::Option;
 use std::result::Result;
 use libc::{c_int, uint64_t, c_char, c_void, c_double, uint8_t};
-use std::ffi::CString;
+use std::ffi::{CString, CStr, OsStr};
+use std::os::unix::ffi::OsStrExt;
 use std::collections::HashMap;
 use std::hash::Hash;
-use std::collections::hash_map::Hasher;
 use std::sync::Mutex;
+use std::path::Path;
+use std::mem::transmute;
 
 lazy_static! {
     static ref GROOVE_FILE_RC: Mutex<PointerReferenceCounter<*mut GrooveFile>> =
@@ -258,11 +255,9 @@ impl Drop for EncodedBuffer {
 impl EncodedBuffer {
     pub fn as_vec(&self) -> &[u8] {
         unsafe {
-            let raw_slice = std::raw::Slice {
-                data: *(*self.groove_buffer).data,
-                len: (*self.groove_buffer).size as usize,
-            };
-            std::mem::transmute::<std::raw::Slice<uint8_t>, &[u8]>(raw_slice)
+            let data = *(*self.groove_buffer).data;
+            let len = (*self.groove_buffer).size as usize;
+            std::slice::from_raw_parts(data, len)
         }
     }
 }
@@ -350,12 +345,10 @@ impl DecodedBuffer {
             if channel_index >= channel_count {
                 panic!("invalid channel index");
             }
+            let data = *((*self.groove_buffer).data.offset(channel_index as isize));
             let frame_count = (*self.groove_buffer).frame_count as usize;
-            let raw_slice = std::raw::Slice {
-                data: *((*self.groove_buffer).data.offset(channel_index as isize)),
-                len: frame_count,
-            };
-            std::mem::transmute::<std::raw::Slice<uint8_t>, &[T]>(raw_slice)
+            let raw_slice = std::slice::from_raw_parts(data, frame_count);
+            transmute(raw_slice)
         }
     }
 
@@ -430,11 +423,10 @@ impl DecodedBuffer {
             let channel_count = groove_channel_layout_count(
                 (*self.groove_buffer).format.channel_layout) as usize;
             let frame_count = (*self.groove_buffer).frame_count as usize;
-            let raw_slice = std::raw::Slice {
-                data: *(*self.groove_buffer).data,
-                len: channel_count * frame_count,
-            };
-            std::mem::transmute::<std::raw::Slice<uint8_t>, &[T]>(raw_slice)
+            let data = *(*self.groove_buffer).data;
+            let len = channel_count * frame_count;
+            let raw_slice = std::slice::from_raw_parts(data, len);
+            transmute(raw_slice)
         }
     }
 }
@@ -636,6 +628,8 @@ struct GrooveFile {
     filename: *const c_char,
 }
 
+unsafe impl Send for GrooveFile {}
+
 impl Destroy for *mut GrooveFile {
     fn destroy(&self) {
         unsafe {
@@ -658,7 +652,8 @@ impl File {
     /// open a file on disk and prepare to stream audio from it
     pub fn open(filename: &Path) -> Option<File> {
         init();
-        let c_filename = CString::from_slice(filename.as_vec());
+        let filename_byte_vec = filename.as_os_str().as_bytes().to_vec();
+        let c_filename = CString::new(filename_byte_vec).unwrap();
         unsafe {
             let groove_file = groove_file_open(c_filename.as_ptr());
             match groove_file.is_null() {
@@ -671,10 +666,10 @@ impl File {
         }
     }
 
-    pub fn filename(&self) -> Path {
+    pub fn filename(&self) -> &Path {
         unsafe {
-            let slice = std::ffi::c_str_to_bytes(&(*self.groove_file).filename);
-            Path::new(slice)
+            let slice = CStr::from_ptr((*self.groove_file).filename).to_bytes();
+            Path::new(&*(slice as *const [u8] as *const OsStr))
         }
     }
     /// whether the file has pending edits
@@ -695,7 +690,7 @@ impl File {
 
     pub fn metadata_get(&self, key: &str, case_sensitive: bool) -> Option<Tag> {
         let flags: c_int = if case_sensitive {TAG_MATCH_CASE} else {0};
-        let c_tag_key = CString::from_slice(key.as_bytes());
+        let c_tag_key = CString::new(key).unwrap();
         unsafe {
             let tag = groove_file_metadata_get(self.groove_file, c_tag_key.as_ptr(),
                                                std::ptr::null(), flags);
@@ -713,8 +708,8 @@ impl File {
 
     pub fn metadata_set(&self, key: &str, value: &str, case_sensitive: bool) -> Result<(), i32> {
         let flags: c_int = if case_sensitive {TAG_MATCH_CASE} else {0};
-        let c_tag_key = CString::from_slice(key.as_bytes());
-        let c_tag_value = CString::from_slice(value.as_bytes());
+        let c_tag_key = CString::new(key).unwrap();
+        let c_tag_value = CString::new(value).unwrap();
         unsafe {
             let err_code = groove_file_metadata_set(self.groove_file, c_tag_key.as_ptr(),
                                                     c_tag_value.as_ptr(), flags);
@@ -728,7 +723,7 @@ impl File {
 
     pub fn metadata_delete(&self, key: &str, case_sensitive: bool) -> Result<(), i32> {
         let flags: c_int = if case_sensitive {TAG_MATCH_CASE} else {0};
-        let c_tag_key = CString::from_slice(key.as_bytes());
+        let c_tag_key = CString::new(key).unwrap();
         unsafe {
             let err_code = groove_file_metadata_set(self.groove_file, c_tag_key.as_ptr(),
                                                     std::ptr::null(), flags);
@@ -772,9 +767,9 @@ pub struct MetadataIterator<'a> {
 }
 
 impl<'a> Iterator for MetadataIterator<'a> {
-    type Item = Tag<'a>;
+    type Item = Tag;
     fn next(&mut self) -> Option<Tag> {
-        let c_tag_key = CString::from_slice("".as_bytes());
+        let c_tag_key = CString::new("").unwrap();
         unsafe {
             let tag = groove_file_metadata_get(self.file.groove_file, c_tag_key.as_ptr(),
                                                self.curr, 0);
@@ -791,7 +786,7 @@ impl<'a> Iterator for MetadataIterator<'a> {
 const EVERY_SINK_FULL: c_int = 0;
 const ANY_SINK_FULL:   c_int = 1;
 
-#[derive(Copy, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum FillMode {
     /// This is the default behavior. The playlist will decode audio if any sinks
     /// are not full. If any sinks do not drain fast enough the data will buffer up
@@ -803,7 +798,7 @@ pub enum FillMode {
     AnySinkFull,
 }
 
-#[derive(Copy, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum Log {
     Quiet,
     Error,
@@ -811,7 +806,7 @@ pub enum Log {
     Info,
 }
 
-#[derive(Copy, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum ChannelLayout {
     FrontLeft,
     FrontRight,
@@ -873,14 +868,14 @@ const SAMPLE_FMT_FLTP: i32 =  8;
 const SAMPLE_FMT_DBLP: i32 =  9;
 
 /// how to organize bits which represent audio samples
+#[derive(Clone, Copy)]
 pub struct SampleFormat {
     pub sample_type: SampleType,
     /// planar means non-interleaved
     pub planar: bool,
 }
-impl Copy for SampleFormat {}
 
-#[derive(Copy, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum SampleType {
     NoType,
     /// unsigned 8 bits
@@ -938,30 +933,24 @@ impl SampleFormat {
     }
 }
 
-pub struct Tag<'a> {
+pub struct Tag {
     groove_tag: *mut c_void,
 }
 
-impl<'a> Tag<'a> {
-    pub fn key(&self) -> Result<&'a str, Utf8Error> {
+impl<'a> Tag {
+    fn get_field(&self, get: unsafe extern "C" fn(*mut c_void) -> *const c_char) -> Result<&'a str, Utf8Error> {
         unsafe {
-            let key_c_str = groove_tag_key(self.groove_tag);
-            let slice = std::ffi::c_str_to_bytes(&key_c_str);
-            match std::str::from_utf8(slice) {
-                Result::Ok(s) => Result::Ok(std::mem::transmute::<&str, &'a str>(s)),
-                Result::Err(err) => Result::Err(err),
-            }
+            let field = groove_tag_key(self.groove_tag);
+            let slice = CStr::from_ptr(field).to_bytes();
+            std::str::from_utf8(slice).map(|s| transmute(s))
         }
     }
+    pub fn key(&self) -> Result<&'a str, Utf8Error> {
+        self.get_field(groove_tag_key)
+
+    }
     pub fn value(&self) -> Result<&'a str, Utf8Error> {
-        unsafe {
-            let val_c_str = groove_tag_value(self.groove_tag);
-            let slice = std::ffi::c_str_to_bytes(&val_c_str);
-            match std::str::from_utf8(slice) {
-                Result::Ok(s) => Result::Ok(std::mem::transmute::<&str, &'a str>(s)),
-                Result::Err(err) => Result::Err(err),
-            }
-        }
+        self.get_field(groove_tag_value)
     }
 }
 
@@ -972,12 +961,12 @@ struct GrooveAudioFormat {
     sample_fmt: c_int,
 }
 
+#[derive(Clone, Copy)]
 pub struct AudioFormat {
     pub sample_rate: i32,
     pub channel_layout: ChannelLayout,
     pub sample_fmt: SampleFormat,
 }
-impl Copy for AudioFormat {}
 
 impl AudioFormat {
     fn from_groove(groove_audio_format: &GrooveAudioFormat) -> Self {
@@ -1088,7 +1077,7 @@ impl Encoder {
     /// to help libgroove guess which format to use
     /// use `avconv -formats` to get a list of possibilities
     pub fn set_format_short_name(&self, format: &str) {
-        let format_c_str = CString::from_slice(format.as_bytes());
+        let format_c_str = CString::new(format).unwrap();
         unsafe {
             (*self.groove_encoder).format_short_name = format_c_str.as_ptr();
         }
@@ -1098,7 +1087,7 @@ impl Encoder {
     /// to help libgroove guess which codec to use
     /// use `avconv -codecs` to get a list of possibilities
     pub fn set_codec_short_name(&self, codec: &str) {
-        let codec_c_str = CString::from_slice(codec.as_bytes());
+        let codec_c_str = CString::new(codec).unwrap();
         unsafe {
             (*self.groove_encoder).codec_short_name = codec_c_str.as_ptr();
         }
@@ -1107,7 +1096,7 @@ impl Encoder {
     /// optional - provide an example filename
     /// to help libgroove guess which format/codec to use
     pub fn set_filename(&self, filename: &str) {
-        let filename_c_str = CString::from_slice(filename.as_bytes());
+        let filename_c_str = CString::new(filename).unwrap();
         unsafe {
             (*self.groove_encoder).filename = filename_c_str.as_ptr();
         }
@@ -1116,7 +1105,7 @@ impl Encoder {
     /// optional - provide a mime type string
     /// to help libgroove guess which format/codec to use
     pub fn set_mime_type(&self, mime_type: &str) {
-        let mime_type_c_str = CString::from_slice(mime_type.as_bytes());
+        let mime_type_c_str = CString::new(mime_type).unwrap();
         unsafe {
             (*self.groove_encoder).mime_type = mime_type_c_str.as_ptr();
         }
@@ -1134,8 +1123,8 @@ impl Encoder {
     /// see docs for file::metadata_set
     pub fn metadata_set(&self, key: &str, value: &str, case_sensitive: bool) -> Result<(), i32> {
         let flags: c_int = if case_sensitive {TAG_MATCH_CASE} else {0};
-        let c_tag_key = CString::from_slice(key.as_bytes());
-        let c_tag_value = CString::from_slice(value.as_bytes());
+        let c_tag_key = CString::new(key).unwrap();
+        let c_tag_value = CString::new(value).unwrap();
         unsafe {
             let err_code = groove_encoder_metadata_set(self.groove_encoder, c_tag_key.as_ptr(),
                                                        c_tag_value.as_ptr(), flags);
@@ -1217,7 +1206,7 @@ pub fn version_patch() -> i32 {
 pub fn version() -> &'static str {
     unsafe {
         let version = groove_version();
-        let slice = std::ffi::c_str_to_bytes(&version);
+        let slice = CStr::from_ptr(version).to_bytes();
         std::mem::transmute::<&str, &'static str>(std::str::from_utf8(slice).unwrap())
     }
 }
@@ -1232,11 +1221,11 @@ trait Destroy {
     fn destroy(&self);
 }
 
-struct PointerReferenceCounter<P: Destroy + Hash<Hasher> + Eq> {
+struct PointerReferenceCounter<P: Destroy + Hash + Eq> {
     map: HashMap<P, usize>,
 }
 
-impl<P: Destroy + Hash<Hasher> + Eq> PointerReferenceCounter<P> {
+impl<P: Destroy + Hash + Eq> PointerReferenceCounter<P> {
     fn new() -> Self {
         PointerReferenceCounter {
             map: HashMap::new(),

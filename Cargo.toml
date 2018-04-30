@@ -11,4 +11,4 @@ description = "Safe bindings to libgroove - streaming audio processing library"
 [dependencies]
 
 lazy_static = "0.1.*"
-libc = "0.2.40"
+libc = "^0.2.40"

@@ -44,7 +44,7 @@ impl PlaylistItem {
         unsafe {
             let groove_file = (*self.groove_playlist_item).file;
             GROOVE_FILE_RC.lock().unwrap().incr(groove_file);
-            File {groove_file: groove_file}
+            File { groove_file }
         }
     }
 }
@@ -80,14 +80,14 @@ impl Playlist {
     /// get the first playlist item
     pub fn first(&self) -> PlaylistItem {
         unsafe {
-            PlaylistItem {groove_playlist_item: (*self.groove_playlist).head }
+            PlaylistItem { groove_playlist_item: (*self.groove_playlist).head }
         }
     }
 
     /// get the last playlist item
     pub fn last(&self) -> PlaylistItem {
         unsafe {
-            PlaylistItem {groove_playlist_item: (*self.groove_playlist).tail }
+            PlaylistItem { groove_playlist_item: (*self.groove_playlist).tail }
         }
     }
 
@@ -99,39 +99,41 @@ impl Playlist {
 
     /// once you add a file to the playlist, you must not destroy it until you first
     /// remove it from the playlist.
-    /// gain: see PlaylistItem. use 1.0 for no adjustment.
-    /// peak: see PlaylistItem. use 1.0 for no adjustment.
-    /// returns the newly created playlist item.
-    pub fn append(&self, file: &File, gain: f64, peak: f64) -> PlaylistItem {
-        unsafe {
-            let inserted_item = groove_playlist_insert(self.groove_playlist, file.groove_file,
-                                                       gain, peak, ::std::ptr::null_mut());
-            if inserted_item.is_null() {
-                panic!("out of memory");
-            } else {
-                GROOVE_FILE_RC.lock().unwrap().incr(file.groove_file);
-                PlaylistItem {groove_playlist_item: inserted_item}
-            }
-        }
-    }
-
-    /// once you add a file to the playlist, you must not destroy it until you first
-    /// remove it from the playlist.
     /// before: the item to insert before.
     /// gain: see Groove. use 1.0 for no adjustment.
     /// peak: see Groove. use 1.0 for no adjustment.
     /// returns the newly created playlist item.
-    pub fn insert(&self, file: &File, gain: f64, peak: f64, before: &PlaylistItem) -> PlaylistItem {
+    fn _insert(&self, file: &File, gain: f64, peak: f64, before: Option<&PlaylistItem>) -> PlaylistItem {
+        let before_item = if let Some(before) = before {
+            before.groove_playlist_item
+        } else {
+            ::std::ptr::null_mut()
+        };
+
         unsafe {
-            let inserted_item = groove_playlist_insert(self.groove_playlist, file.groove_file,
-                                                       gain, peak, before.groove_playlist_item);
+            let inserted_item = groove_playlist_insert(
+                self.groove_playlist,
+                file.groove_file,
+                gain,
+                peak,
+                before_item
+            );
+
             if inserted_item.is_null() {
                 panic!("out of memory");
             } else {
                 GROOVE_FILE_RC.lock().unwrap().incr(file.groove_file);
-                PlaylistItem {groove_playlist_item: inserted_item}
+                PlaylistItem { groove_playlist_item: inserted_item }
             }
         }
+    }
+
+    pub fn append(&self, file: &File, gain: f64, peak: f64) -> PlaylistItem {
+        self._insert(file, gain, peak, None)
+    }
+
+    pub fn insert(&self, file: &File, gain: f64, peak: f64, before: &PlaylistItem) -> PlaylistItem {
+        self._insert(file, gain, peak, Some(before))
     }
 
     /// return the count of playlist items
@@ -160,10 +162,6 @@ impl Playlist {
         };
         unsafe { groove_playlist_set_fill_mode(self.groove_playlist, mode_int) }
     }
-
-    fn get_groove_playlist(&self) -> *mut GroovePlaylist {
-        self.groove_playlist
-    }
 }
 
 pub struct PlaylistIterator {
@@ -176,11 +174,11 @@ impl Iterator for PlaylistIterator {
     fn next(&mut self) -> Option<PlaylistItem> {
         unsafe {
             if self.curr.is_null() {
-                Option::None
+                None
             } else {
                 let prev = self.curr;
                 self.curr = (*self.curr).next;
-                Option::Some(PlaylistItem {groove_playlist_item: prev})
+                Some(PlaylistItem { groove_playlist_item: prev })
             }
         }
     }

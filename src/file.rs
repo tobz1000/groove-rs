@@ -30,6 +30,10 @@ use c_api::{
 use super::GROOVE_FILE_RC;
 use audio_format::AudioFormat;
 
+fn err_code_result(err_code: i32) -> Result<(), i32> {
+    if err_code >= 0 { Ok(()) } else { Err(err_code) }
+}
+
 impl super::Destroy for *mut GrooveFile {
     fn destroy(&self) {
         unsafe {
@@ -54,14 +58,15 @@ impl File {
         super::init();
         let filename_byte_vec = filename.as_os_str().as_bytes().to_vec();
         let c_filename = CString::new(filename_byte_vec).unwrap();
+
         unsafe {
             let groove_file = groove_file_open(c_filename.as_ptr());
-            match groove_file.is_null() {
-                true  => Option::None,
-                false => {
-                    GROOVE_FILE_RC.lock().unwrap().incr(groove_file);
-                    Option::Some(File { groove_file: groove_file })
-                }
+
+            if groove_file.is_null() {
+                None
+            } else {
+                GROOVE_FILE_RC.lock().unwrap().incr(groove_file);
+                Some(File { groove_file })
             }
         }
     }
@@ -89,15 +94,21 @@ impl File {
     }
 
     pub fn metadata_get(&self, key: &str, case_sensitive: bool) -> Option<Tag> {
-        let flags: c_int = if case_sensitive {TAG_MATCH_CASE} else {0};
+        let flags: c_int = if case_sensitive { TAG_MATCH_CASE } else { 0 };
         let c_tag_key = CString::new(key).unwrap();
+
         unsafe {
-            let tag = groove_file_metadata_get(self.groove_file, c_tag_key.as_ptr(),
-                                               ::std::ptr::null(), flags);
-            if tag.is_null() {
-                Option::None
+            let groove_tag = groove_file_metadata_get(
+                self.groove_file,
+                c_tag_key.as_ptr(),
+                ::std::ptr::null(),
+                flags
+            );
+
+            if groove_tag.is_null() {
+                None
             } else {
-                Option::Some(Tag {groove_tag: tag})
+                Some(Tag { groove_tag })
             }
         }
     }
@@ -106,58 +117,54 @@ impl File {
         MetadataIterator { file: self, curr: ::std::ptr::null() }
     }
 
-    pub fn metadata_set(&self, key: &str, value: &str, case_sensitive: bool) -> Result<(), i32> {
-        let flags: c_int = if case_sensitive {TAG_MATCH_CASE} else {0};
+    fn _metadata_set(&self, key: &str, value: Option<&str>, case_sensitive: bool) -> Result<(), i32> {
+        let flags: c_int = if case_sensitive { TAG_MATCH_CASE } else { 0 };
+
         let c_tag_key = CString::new(key).unwrap();
-        let c_tag_value = CString::new(value).unwrap();
-        unsafe {
-            let err_code = groove_file_metadata_set(self.groove_file, c_tag_key.as_ptr(),
-                                                    c_tag_value.as_ptr(), flags);
-            if err_code >= 0 {
-                Result::Ok(())
-            } else {
-                Result::Err(err_code as i32)
-            }
-        }
+        let c_tag_value_ptr = if let Some(value) = value {
+            CString::new(value).unwrap().as_ptr()
+        } else {
+            ::std::ptr::null()
+        };
+
+        let err_code = unsafe {
+            groove_file_metadata_set(
+                self.groove_file,
+                c_tag_key.as_ptr(),
+                c_tag_value_ptr,
+                flags
+            )
+        };
+
+        err_code_result(err_code)
+    }
+
+    pub fn metadata_set(&self, key: &str, value: &str, case_sensitive: bool) -> Result<(), i32> {
+        self._metadata_set(key, Some(value), case_sensitive)
     }
 
     pub fn metadata_delete(&self, key: &str, case_sensitive: bool) -> Result<(), i32> {
-        let flags: c_int = if case_sensitive {TAG_MATCH_CASE} else {0};
-        let c_tag_key = CString::new(key).unwrap();
-        unsafe {
-            let err_code = groove_file_metadata_set(self.groove_file, c_tag_key.as_ptr(),
-                                                    ::std::ptr::null(), flags);
-            if err_code >= 0 {
-                Result::Ok(())
-            } else {
-                Result::Err(err_code as i32)
-            }
-        }
+        self._metadata_set(key, None, case_sensitive)        
     }
 
     /// write changes made to metadata to disk.
     pub fn save(&self) -> Result<(), i32> {
-        unsafe {
-            let err_code = groove_file_save(self.groove_file);
-            if err_code >= 0 {
-                Result::Ok(())
-            } else {
-                Result::Err(err_code as i32)
-            }
-        }
+        err_code_result(unsafe { groove_file_save(self.groove_file) })
     }
 
     /// get the audio format of the main audio stream of a file
     pub fn audio_format(&self) -> AudioFormat {
+        let mut result = GrooveAudioFormat {
+            sample_rate: 0,
+            channel_layout: 0,
+            sample_fmt: 0,
+        };
+
         unsafe {
-            let mut result = GrooveAudioFormat {
-                sample_rate: 0,
-                channel_layout: 0,
-                sample_fmt: 0,
-            };
             groove_file_audio_format(self.groove_file, &mut result);
-            AudioFormat::from_groove(&result)
         }
+
+        AudioFormat::from_groove(&result)
     }
 }
 
@@ -168,16 +175,24 @@ pub struct MetadataIterator<'a> {
 
 impl<'a> Iterator for MetadataIterator<'a> {
     type Item = Tag;
+
     fn next(&mut self) -> Option<Tag> {
         let c_tag_key = CString::new("").unwrap();
+
         unsafe {
-            let tag = groove_file_metadata_get(self.file.groove_file, c_tag_key.as_ptr(),
-                                               self.curr, 0);
-            self.curr = tag;
-            if tag.is_null() {
-                Option::None
+            let groove_tag = groove_file_metadata_get(
+                self.file.groove_file,
+                c_tag_key.as_ptr(),
+                self.curr,
+                0
+            );
+
+            self.curr = groove_tag;
+
+            if groove_tag.is_null() {
+                None
             } else {
-                Option::Some(Tag {groove_tag: tag})
+                Some(Tag { groove_tag })
             }
         }
     }

@@ -1,7 +1,6 @@
 extern crate libc;
 
 use std::str;
-use std::mem::transmute;
 use std::path::Path;
 use std::os::unix::ffi::OsStrExt;
 use std::ffi::{CStr, CString, OsStr};
@@ -209,7 +208,7 @@ impl<'a> Tag {
         unsafe {
             let field = get(self.groove_tag);
             let slice = CStr::from_ptr(field).to_bytes();
-            str::from_utf8(slice).map(|s| transmute(s))
+            str::from_utf8(slice)
         }
     }
     pub fn key(&self) -> Result<&'a str, str::Utf8Error> {

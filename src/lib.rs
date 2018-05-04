@@ -17,7 +17,6 @@ mod pointer_reference_counter;
 use std::sync::{Once, ONCE_INIT};
 use std::ffi::CStr;
 use std::sync::Mutex;
-use std::mem::transmute;
 
 use libc::c_int;
 
@@ -121,6 +120,6 @@ pub fn version() -> &'static str {
     unsafe {
         let version = groove_version();
         let slice = CStr::from_ptr(version).to_bytes();
-        transmute(std::str::from_utf8(slice).unwrap())
+        std::str::from_utf8(slice).unwrap()
     }
 }

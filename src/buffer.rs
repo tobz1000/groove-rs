@@ -3,15 +3,22 @@ use std::slice;
 
 use c_api::{
     GrooveBuffer,
+    BUFFER_NO,
+    BUFFER_YES,
+    BUFFER_END,
     groove_buffer_unref,
     groove_channel_layout_count,
+    groove_encoder_buffer_get,
+    groove_sink_buffer_get
 };
 
 use audio_format::{SampleFormat, SampleType};
+use encoder::Encoder;
+use sink::Sink;
 
 /// A buffer which contains encoded audio data
 pub struct EncodedBuffer {
-    groove_buffer: *mut GrooveBuffer,
+    pub(crate) groove_buffer: *mut GrooveBuffer,
 }
 unsafe impl Sync for EncodedBuffer {}
 unsafe impl Send for EncodedBuffer {}
@@ -25,6 +32,20 @@ impl Drop for EncodedBuffer {
 }
 
 impl EncodedBuffer {
+    pub(crate) fn from_encoder(encoder: &Encoder) -> Result<Option<EncodedBuffer>, ()> {
+        let mut groove_buffer: *mut GrooveBuffer = ::std::ptr::null_mut();
+        let return_code = unsafe {
+            groove_encoder_buffer_get(encoder.groove_encoder, &mut groove_buffer, 1)
+        };
+
+        match return_code {
+            c if c == BUFFER_NO => Err(()),
+            c if c == BUFFER_YES => Ok(Some(EncodedBuffer { groove_buffer })),
+            c if c == BUFFER_END => Ok(None),
+            _ => panic!("unexpected buffer result"),
+        }
+    }
+
     pub fn as_vec(&self) -> &[u8] {
         unsafe {
             let data = *(*self.groove_buffer).data;
@@ -36,7 +57,7 @@ impl EncodedBuffer {
 
 /// A buffer which contains raw samples
 pub struct DecodedBuffer {
-    groove_buffer: *mut GrooveBuffer,
+    pub(crate) groove_buffer: *mut GrooveBuffer,
 }
 unsafe impl Sync for DecodedBuffer {}
 unsafe impl Send for DecodedBuffer {}
@@ -50,6 +71,20 @@ impl Drop for DecodedBuffer {
 }
 
 impl DecodedBuffer {
+    pub(crate) fn from_sink(sink: &Sink) -> Result<Option<DecodedBuffer>, ()> {
+        let mut groove_buffer: *mut GrooveBuffer = ::std::ptr::null_mut();
+        let return_code = unsafe {
+            groove_sink_buffer_get(sink.groove_sink, &mut groove_buffer, 1)
+        };
+
+        match return_code {
+            c if c == BUFFER_NO => Err(()),
+            c if c == BUFFER_YES => Ok(Some(DecodedBuffer { groove_buffer })),
+            c if c == BUFFER_END => Ok(None),
+            _ => panic!("unexpected buffer result"),
+        }
+    }
+
     /// returns a vector of f64
     /// panics if the buffer is not planar
     /// panics if the buffer is not SampleType::Dbl

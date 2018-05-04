@@ -208,7 +208,6 @@ extern {
                               gain: c_double, peak: c_double,
                               next: *mut GroovePlaylistItem) -> *mut GroovePlaylistItem;
     pub fn groove_playlist_destroy(playlist: *mut GroovePlaylist);
-    pub fn groove_playlist_count(playlist: *mut GroovePlaylist) -> c_int;
     pub fn groove_playlist_clear(playlist: *mut GroovePlaylist);
     pub fn groove_playlist_set_fill_mode(playlist: *mut GroovePlaylist, mode: c_int);
 

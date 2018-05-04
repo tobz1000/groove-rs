@@ -26,21 +26,10 @@ use c_api::{
     groove_tag_value
 };
 
-use pointer_reference_counter::Destroy;
-
-use super::GROOVE_FILE_RC;
 use audio_format::AudioFormat;
 
 fn err_code_result(err_code: i32) -> Result<(), i32> {
     if err_code >= 0 { Ok(()) } else { Err(err_code) }
-}
-
-impl Destroy for *mut GrooveFile {
-    fn destroy(&self) {
-        unsafe {
-            groove_file_close(*self);
-        }
-    }
 }
 
 pub struct File {
@@ -49,7 +38,9 @@ pub struct File {
 
 impl Drop for File {
     fn drop(&mut self) {
-        GROOVE_FILE_RC.lock().unwrap().decr(self.groove_file);
+        unsafe {
+            groove_file_close(self.groove_file);
+        }
     }
 }
 
@@ -66,7 +57,6 @@ impl File {
             if groove_file.is_null() {
                 None
             } else {
-                GROOVE_FILE_RC.lock().unwrap().incr(groove_file);
                 Some(File { groove_file })
             }
         }
@@ -78,12 +68,14 @@ impl File {
             Path::new(&*(slice as *const [u8] as *const OsStr))
         }
     }
+
     /// whether the file has pending edits
     pub fn is_dirty(&self) -> bool {
         unsafe {
-            (*self.groove_file).dirty == 1
+            (*self.groove_file).dirty != 0
         }
     }
+
     /// main audio stream duration in seconds. note that this relies on a
     /// combination of format headers and heuristics. It can be inaccurate.
     /// The most accurate way to learn the duration of a file is to use

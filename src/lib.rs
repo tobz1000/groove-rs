@@ -1,8 +1,5 @@
 extern crate libc;
 
-#[macro_use]
-extern crate lazy_static;
-
 mod c_api;
 
 mod audio_format;
@@ -12,16 +9,12 @@ mod file;
 mod playlist;
 mod sink;
 
-mod pointer_reference_counter;
-
 use std::sync::{Once, ONCE_INIT};
 use std::ffi::CStr;
-use std::sync::Mutex;
 
 use libc::c_int;
 
 use c_api::{
-    GrooveFile,
     groove_init,
     groove_finish,
     groove_set_logging,
@@ -30,9 +23,6 @@ use c_api::{
     groove_version_patch,
     groove_version,
 };
-
-use pointer_reference_counter::PointerReferenceCounter;
-
 pub use audio_format::{
     ChannelLayout,
     SampleFormat,
@@ -52,15 +42,9 @@ pub use file::{
 pub use playlist::{
     Playlist,
     PlaylistItem,
-    PlaylistIterator,
     FillMode
 };
 pub use sink::Sink;
-
-lazy_static! {
-    static ref GROOVE_FILE_RC: Mutex<PointerReferenceCounter<*mut GrooveFile>> =
-        Mutex::new(PointerReferenceCounter::new());
-}
 
 fn init() {
     static mut INIT: Once = ONCE_INIT;

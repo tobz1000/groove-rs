@@ -1,11 +1,9 @@
 use c_api::{
     GrooveSink,
-    GrooveBuffer,
     groove_sink_attach,
     groove_sink_detach,
     groove_sink_create,
     groove_sink_destroy,
-    groove_sink_buffer_get,
 };
 
 use audio_format::AudioFormat;
@@ -16,7 +14,7 @@ use playlist::Playlist;
 /// for example you could use it to draw a waveform or other visualization
 /// GroovePlayer uses this internally to get the audio buffer for playback
 pub struct Sink {
-    groove_sink: *mut GrooveSink,
+    pub(crate) groove_sink: *mut GrooveSink,
 }
 
 impl Drop for Sink {
@@ -65,22 +63,15 @@ impl Sink {
     /// returns None on end of playlist, Some<DecodedBuffer> when there is a buffer
     /// blocks the thread until a buffer or end is found
     pub fn buffer_get_blocking(&self) -> Option<DecodedBuffer> {
-        unsafe {
-            let mut buffer: *mut GrooveBuffer = ::std::ptr::null_mut();
-            match groove_sink_buffer_get(self.groove_sink, &mut buffer, 1) {
-                BUFFER_NO  => panic!("did not expect BUFFER_NO when blocking"),
-                BUFFER_YES => Option::Some(DecodedBuffer { groove_buffer: buffer }),
-                BUFFER_END => Option::None,
-                _ => panic!("unexpected buffer result"),
-            }
-        }
+        DecodedBuffer::from_sink(self).expect("buffer aborted or not ready")
+
     }
 
     /// Set this flag to ignore audio_format. If you set this flag, the
     /// buffers you pull from this sink could have any audio format.
     pub fn disable_resample(&self, disabled: bool) {
         unsafe {
-            (*self.groove_sink).disable_resample = if disabled {1} else {0}
+            (*self.groove_sink).disable_resample = if disabled { 1 } else { 0 }
         }
     }
 }

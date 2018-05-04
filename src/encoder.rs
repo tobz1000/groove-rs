@@ -6,13 +6,11 @@ use libc::c_int;
 
 use c_api::{
     GrooveEncoder,
-    GrooveBuffer,
     TAG_MATCH_CASE,
     groove_encoder_attach,
     groove_encoder_detach,
     groove_encoder_create,
     groove_encoder_destroy,
-    groove_encoder_buffer_get,
     groove_encoder_metadata_set,
 };
 use audio_format::AudioFormat;
@@ -22,7 +20,7 @@ use playlist::Playlist;
 /// attach an Encoder to a playlist to keep a buffer of encoded audio full.
 /// for example you could use it to implement an http audio stream
 pub struct Encoder {
-    groove_encoder: *mut GrooveEncoder,
+    pub(crate) groove_encoder: *mut GrooveEncoder,
 }
 
 impl Drop for Encoder {
@@ -161,14 +159,6 @@ impl Encoder {
     /// returns None on end of playlist, Some<EncodedBuffer> when there is a buffer
     /// blocks the thread until a buffer or end is found
     pub fn buffer_get_blocking(&self) -> Option<EncodedBuffer> {
-        unsafe {
-            let mut buffer: *mut GrooveBuffer = ::std::ptr::null_mut();
-            match groove_encoder_buffer_get(self.groove_encoder, &mut buffer, 1) {
-                BUFFER_NO  => panic!("did not expect BUFFER_NO when blocking"),
-                BUFFER_YES => Option::Some(EncodedBuffer { groove_buffer: buffer }),
-                BUFFER_END => Option::None,
-                _ => panic!("unexpected buffer result"),
-            }
-        }
+        EncodedBuffer::from_encoder(self).expect("buffer aborted or not ready")
     }
 }

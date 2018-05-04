@@ -1,22 +1,20 @@
 use c_api::{
     GroovePlaylistItem,
     GroovePlaylist,
-    GrooveFile,
     ANY_SINK_FULL,
     EVERY_SINK_FULL,
     groove_playlist_create,
     groove_playlist_destroy,
     groove_playlist_insert,
-    groove_playlist_count,
     groove_playlist_clear,
     groove_playlist_set_fill_mode,
 };
 
-use super::GROOVE_FILE_RC;
 use file::File;
 
 pub struct PlaylistItem {
     groove_playlist_item: *mut GroovePlaylistItem,
+    file: File
 }
 
 impl PlaylistItem {
@@ -40,18 +38,15 @@ impl PlaylistItem {
         }
     }
 
-    pub fn file(&self) -> File {
-        unsafe {
-            let groove_file = (*self.groove_playlist_item).file;
-            GROOVE_FILE_RC.lock().unwrap().incr(groove_file);
-            File { groove_file }
-        }
+    pub fn file(&self) -> &File {
+        &self.file
     }
 }
 
 /// a playlist keeps its sinks full.
 pub struct Playlist {
     pub(crate) groove_playlist: *mut GroovePlaylist,
+    items: Vec<PlaylistItem>
 }
 
 impl Drop for Playlist {
@@ -65,7 +60,10 @@ impl Playlist {
     pub fn new() -> Self {
         super::init();
         unsafe {
-            Playlist { groove_playlist: groove_playlist_create() }
+            Playlist {
+                groove_playlist: groove_playlist_create(),
+                items: Vec::new()
+            }
         }
     }
 
@@ -77,24 +75,8 @@ impl Playlist {
         }
     }
 
-    /// get the first playlist item
-    pub fn first(&self) -> PlaylistItem {
-        unsafe {
-            PlaylistItem { groove_playlist_item: (*self.groove_playlist).head }
-        }
-    }
-
-    /// get the last playlist item
-    pub fn last(&self) -> PlaylistItem {
-        unsafe {
-            PlaylistItem { groove_playlist_item: (*self.groove_playlist).tail }
-        }
-    }
-
-    pub fn iter(&self) -> PlaylistIterator {
-        unsafe {
-            PlaylistIterator { curr: (*self.groove_playlist).head }
-        }
+    pub fn items(&self) -> &Vec<PlaylistItem> {
+        &self.items
     }
 
     /// once you add a file to the playlist, you must not destroy it until you first
@@ -103,55 +85,49 @@ impl Playlist {
     /// gain: see Groove. use 1.0 for no adjustment.
     /// peak: see Groove. use 1.0 for no adjustment.
     /// returns the newly created playlist item.
-    fn _insert(&self, file: &File, gain: f64, peak: f64, before: Option<&PlaylistItem>) -> PlaylistItem {
-        let before_item = if let Some(before) = before {
-            before.groove_playlist_item
+    fn _insert(&mut self, file: File, gain: f64, peak: f64, index: Option<usize>) {
+        let before_item = if let Some(index) = index {
+            self.items[index].groove_playlist_item
         } else {
             ::std::ptr::null_mut()
         };
 
-        unsafe {
-            let inserted_item = groove_playlist_insert(
+        let groove_playlist_item = unsafe {
+            groove_playlist_insert(
                 self.groove_playlist,
                 file.groove_file,
                 gain,
                 peak,
                 before_item
-            );
+            )
+        };
 
-            if inserted_item.is_null() {
-                panic!("out of memory");
-            } else {
-                GROOVE_FILE_RC.lock().unwrap().incr(file.groove_file);
-                PlaylistItem { groove_playlist_item: inserted_item }
-            }
+        if groove_playlist_item.is_null() {
+            panic!("out of memory");
+        }
+
+        let playlist_item = PlaylistItem { groove_playlist_item, file };
+
+        if let Some(index) = index {
+            self.items.insert(index, playlist_item);
+        } else {
+            self.items.push(playlist_item);
         }
     }
 
-    pub fn append(&self, file: &File, gain: f64, peak: f64) -> PlaylistItem {
+    pub fn append(&mut self, file: File, gain: f64, peak: f64) {
         self._insert(file, gain, peak, None)
     }
 
-    pub fn insert(&self, file: &File, gain: f64, peak: f64, before: &PlaylistItem) -> PlaylistItem {
-        self._insert(file, gain, peak, Some(before))
-    }
-
-    /// return the count of playlist items
-    pub fn len(&self) -> i32 {
-        unsafe {
-            groove_playlist_count(self.groove_playlist) as i32
-        }
+    pub fn insert(&mut self, file: File, gain: f64, peak: f64, index: usize) {
+        self._insert(file, gain, peak, Some(index))
     }
 
     /// remove all playlist items
-    pub fn clear(&self) {
+    pub fn clear(&mut self) {
         unsafe {
-            let groove_files: Vec<*mut GrooveFile> =
-                self.iter().map(|x| (*x.groove_playlist_item).file).collect();
             groove_playlist_clear(self.groove_playlist);
-            for groove_file in groove_files.iter() {
-                GROOVE_FILE_RC.lock().unwrap().decr(*groove_file);
-            }
+            self.items.clear();
         }
     }
 
@@ -160,27 +136,8 @@ impl Playlist {
             FillMode::EverySinkFull => EVERY_SINK_FULL,
             FillMode::AnySinkFull   => ANY_SINK_FULL,
         };
+
         unsafe { groove_playlist_set_fill_mode(self.groove_playlist, mode_int) }
-    }
-}
-
-pub struct PlaylistIterator {
-    curr: *mut GroovePlaylistItem,
-}
-
-impl Iterator for PlaylistIterator {
-    type Item = PlaylistItem;
-
-    fn next(&mut self) -> Option<PlaylistItem> {
-        unsafe {
-            if self.curr.is_null() {
-                None
-            } else {
-                let prev = self.curr;
-                self.curr = (*self.curr).next;
-                Some(PlaylistItem { groove_playlist_item: prev })
-            }
-        }
     }
 }
 

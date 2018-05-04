@@ -12,10 +12,10 @@ mod file;
 mod playlist;
 mod sink;
 
+mod pointer_reference_counter;
+
 use std::sync::{Once, ONCE_INIT};
 use std::ffi::CStr;
-use std::collections::HashMap;
-use std::hash::Hash;
 use std::sync::Mutex;
 use std::mem::transmute;
 
@@ -31,6 +31,8 @@ use c_api::{
     groove_version_patch,
     groove_version,
 };
+
+use pointer_reference_counter::PointerReferenceCounter;
 
 pub use audio_format::{
     ChannelLayout,
@@ -120,37 +122,5 @@ pub fn version() -> &'static str {
         let version = groove_version();
         let slice = CStr::from_ptr(version).to_bytes();
         transmute(std::str::from_utf8(slice).unwrap())
-    }
-}
-
-trait Destroy {
-    fn destroy(&self);
-}
-
-struct PointerReferenceCounter<P: Destroy + Hash + Eq> {
-    map: HashMap<P, usize>,
-}
-
-impl<P: Destroy + Hash + Eq> PointerReferenceCounter<P> {
-    fn new() -> Self {
-        PointerReferenceCounter {
-            map: HashMap::new(),
-        }
-    }
-    fn incr(&mut self, ptr: P) {
-        let rc = match self.map.get(&ptr) {
-            Option::Some(rc) => *rc,
-            Option::None => 0,
-        };
-        self.map.insert(ptr, rc + 1);
-    }
-    fn decr(&mut self, ptr: P) {
-        let count = *self.map.get(&ptr).expect("too many dereferences");
-        if count == 1 {
-            self.map.remove(&ptr);
-            ptr.destroy();
-        } else {
-            self.map.insert(ptr, count - 1);
-        }
     }
 }

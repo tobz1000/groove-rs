@@ -27,6 +27,8 @@ use c_api::{
     groove_tag_value
 };
 
+use pointer_reference_counter::Destroy;
+
 use super::GROOVE_FILE_RC;
 use audio_format::AudioFormat;
 
@@ -34,7 +36,7 @@ fn err_code_result(err_code: i32) -> Result<(), i32> {
     if err_code >= 0 { Ok(()) } else { Err(err_code) }
 }
 
-impl super::Destroy for *mut GrooveFile {
+impl Destroy for *mut GrooveFile {
     fn destroy(&self) {
         unsafe {
             groove_file_close(*self);
